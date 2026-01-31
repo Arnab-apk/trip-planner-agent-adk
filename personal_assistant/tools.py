@@ -43,21 +43,54 @@ class SafetyBrief(TypedDict, total=False):
   source: str
 
 
+
+_FALLBACK_LOCATIONS = {
+    "sikkim": "Gangtok, Sikkim, India",
+    "goa": "Panaji, Goa, India",
+    "kerala": "Kochi, Kerala, India",
+    "himachal pradesh": "Shimla, Himachal Pradesh, India",
+    "himachal": "Shimla, Himachal Pradesh, India",
+    "uttarakhand": "Dehradun, Uttarakhand, India",
+    "kashmir": "Srinagar, Jammu and Kashmir, India",
+    "ladakh": "Leh, Ladakh, India",
+    "rajasthan": "Jaipur, Rajasthan, India",
+    "andaman": "Port Blair, Andaman and Nicobar Islands, India",
+    "andaman and nicobar": "Port Blair, Andaman and Nicobar Islands, India",
+}
+
+
 def _resolve_location(location: str) -> Tuple[float, float, str]:
   """Resolve a free-form location string into coordinates."""
-  response = requests.get(
-      _GEOCODE_ENDPOINT,
-      params={
-          "name": location,
-          "count": 1,
-          "language": "en",
-          "format": "json",
-      },
-      timeout=10,
-  )
-  response.raise_for_status()
-  payload = response.json()
-  results = payload.get("results") or []
+  
+  # 1. Check known fallbacks for broad regions/states
+  clean_loc = location.strip().lower()
+  search_query = _FALLBACK_LOCATIONS.get(clean_loc, location)
+
+  def _query_api(query: str) -> List[Dict[str, Any]]:
+      response = requests.get(
+          _GEOCODE_ENDPOINT,
+          params={
+              "name": query,
+              "count": 5, # Fetch more to filter
+              "language": "en",
+              "format": "json",
+          },
+          timeout=10,
+      )
+      response.raise_for_status()
+      return response.json().get("results") or []
+
+  # 2. Try the primary query (or fallback if substituted)
+  results = _query_api(search_query)
+
+  # 3. If no results or results seem non-Indian (optional heuristic), try appending ", India"
+  #    Only do this if the user didn't already specify India.
+  if not results and "india" not in clean_loc:
+      results = _query_api(f"{search_query}, India")
+  
+  # 4. Filter for reasonable matches if possible (e.g. prioritize India if ambiguous)
+  #    For now, we just take the first one, but the ", India" retry helps significantly.
+
   if not results:
     raise ValueError(f"Unable to geocode location '{location}'.")
 
